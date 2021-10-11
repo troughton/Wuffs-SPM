@@ -92,23 +92,53 @@ public final class ImageDecoder {
 public final class PixelBuffer {
     public let buffer: wuffs_base__pixel_buffer
     public private(set) var allocation: UnsafeMutableRawPointer?
-    public let deallocateFunc: @convention(thin) (UnsafeMutableRawPointer) -> Void
+    public let deallocateFunc: @convention(thin) (_ memory: UnsafeMutableRawPointer, _ userContext: AnyObject?) -> Void
+    public var userContext: AnyObject? = nil
     
-    init(buffer: wuffs_base__pixel_buffer, allocation: UnsafeMutableRawPointer?, deallocateFunc: @escaping @convention(thin) (UnsafeMutableRawPointer) -> Void) {
+    init(buffer: wuffs_base__pixel_buffer, allocation: UnsafeMutableRawPointer?, userContext: AnyObject? = nil, deallocateFunc: @escaping @convention(thin) (_ memory: UnsafeMutableRawPointer, _ userContext: AnyObject?) -> Void) {
         self.buffer = buffer
         self.allocation = allocation
+        self.userContext = userContext
         self.deallocateFunc = deallocateFunc
     }
     
-    public func moveAllocation() -> UnsafeMutableRawPointer? {
-        let result = self.allocation
+    public convenience init(imageConfig image_config: wuffs_base__image_config,
+    allocatingWith allocateFunc: (_ byteCount: Int) throws -> (memory: UnsafeMutableRawPointer, userContext: AnyObject?)?, deallocatingWith deallocateFunc: @escaping @convention(thin) (_ memory: UnsafeMutableRawPointer, _ userContext: AnyObject?) -> Void) throws {
+        let w = image_config.pixcfg.width
+        let h = image_config.pixcfg.height
+        if ((w == 0) || (h == 0)) {
+            throw WuffsError.zeroSizedImage
+        }
+        let len = image_config.pixcfg.pixelBufferLength
+        if ((len == 0) || (SIZE_MAX < len)) {
+            throw WuffsError.unsupportedPixelConfiguration
+        }
+        guard let (ptr, userContext) = try allocateFunc(Int(len)) else {
+            throw WuffsError.outOfMemory
+        }
+        var pixbuf = wuffs_base__pixel_buffer()
+        var status = withUnsafePointer(to: image_config.pixcfg) { pixConfig in
+            return wuffs_base__pixel_buffer__set_from_slice(&pixbuf,
+                                                     pixConfig,
+                                                     wuffs_base__make_slice_u8(ptr.assumingMemoryBound(to: UInt8.self), Int(len)))
+        }
+        if (!wuffs_base__status__is_ok(&status)) {
+            deallocateFunc(ptr, userContext)
+            throw WuffsError(description: String(cString: wuffs_base__status__message(&status)))
+        }
+        self.init(buffer: pixbuf, allocation: ptr, userContext: userContext, deallocateFunc: deallocateFunc)
+    }
+
+    public func moveAllocation() -> (allocation: UnsafeMutableRawPointer?, userContext: AnyObject?) {
+        let result = (self.allocation, self.userContext)
         self.allocation = nil
+        self.userContext = nil
         return result
     }
     
     deinit {
         if let allocation = self.allocation {
-            self.deallocateFunc(allocation)
+            self.deallocateFunc(allocation, self.userContext)
         }
     }
 }
@@ -277,7 +307,7 @@ extension DecodeImageCallbacks {
             free(ptr)
             throw WuffsError(description: String(cString: wuffs_base__status__message(&status)))
         }
-        return PixelBuffer(buffer: pixbuf, allocation: ptr, deallocateFunc: { free($0) })
+        return PixelBuffer(buffer: pixbuf, allocation: ptr, deallocateFunc: { mem, _ in free(mem) })
        
     }
     
