@@ -430,7 +430,7 @@ func decodeImage0(callbacks: DecodeImageCallbacks,
         // Determine the image format.
         if (!redirected) {
             while (true) {
-                fourcc = wuffs_base__magic_number_guess_fourcc(io_buf.readerSlice);
+                fourcc = wuffs_base__magic_number_guess_fourcc(io_buf.readerSlice, io_buf.meta.closed);
                 if (fourcc > 0) {
                     break;
                 } else if ((fourcc == 0) && (io_buf.readerLength >= 64)) {
