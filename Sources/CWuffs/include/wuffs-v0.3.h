@@ -68,6 +68,8 @@
 extern "C" {
 #endif
 
+#include <stdio.h>
+
 // ---------------- Version
 
 // WUFFS_VERSION is the major.minor.patch version, as per https://semver.org/,
